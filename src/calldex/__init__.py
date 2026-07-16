@@ -1,2 +1,5 @@
-def main() -> None:
-    print("Hello from calldex!")
+from __future__ import annotations
+
+from .agent import main
+
+__all__ = ["main"]
