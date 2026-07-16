@@ -1,0 +1,18 @@
+[project]
+name = "calldex"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+    "livekit-agents[google]~=1.5",
+    "openai-codex==0.1.0b3",
+    "python-dotenv>=1.2.2",
+]
+
+[project.scripts]
+calldex = "calldex:main"
+
+[build-system]
+requires = ["uv_build>=0.11.19,<0.12.0"]
+build-backend = "uv_build"
