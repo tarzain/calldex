@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 
 from .agent import build_codex_client, load_calldex_env, server, set_dashboard_runtime
 from .codex_service import CodexService, CodexServiceError, ThreadNotFoundError
+from .desktop_ipc import DesktopIpcBridge
 from .runtime import AccessMode, ActiveRunError, CodexRuntime, RunNotFoundError
 
 HOST = "127.0.0.1"
@@ -75,7 +76,12 @@ class ArchiveThreadRequest(BaseModel):
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     default_cwd = Path(os.getenv("CALLDEX_CODEX_CWD", str(Path.cwd()))).expanduser().resolve()
     client = build_codex_client(cwd=default_cwd)
-    runtime = CodexRuntime(client, default_cwd=default_cwd)
+    runtime = CodexRuntime(
+        client,
+        default_cwd=default_cwd,
+        desktop_bridge=DesktopIpcBridge(),
+    )
+    await runtime.start()
     app.state.codex_client = client
     app.state.runtime = runtime
     app.state.codex = runtime.service
@@ -176,6 +182,8 @@ def create_app(
         try:
             result = await codex(request).read_thread(thread_id)
             runtime = getattr(request.app.state, "runtime", None)
+            if runtime:
+                await runtime.observe_thread(thread_id)
             active = runtime.active_run(thread_id) if runtime else None
             result["active_run"] = active.summary() if active else None
             return result
@@ -228,11 +236,16 @@ def create_app(
         request: Request,
     ) -> dict[str, Any]:
         try:
-            run = await codex_runtime(request).start_run(
-                thread_id,
-                message.prompt,
-                access_mode=message.access_mode,
-            )
+            runtime = codex_runtime(request)
+            try:
+                run = await runtime.start_run(
+                    thread_id,
+                    message.prompt,
+                    access_mode=message.access_mode,
+                )
+            except ActiveRunError as active:
+                await runtime.steer(active.run_id, message.prompt)
+                run = runtime.get_run(active.run_id)
             return {"run": run.summary()}
         except Exception as exc:
             raise_runtime_error(exc)
@@ -303,7 +316,11 @@ def create_app(
         try:
             runtime = getattr(request.app.state, "runtime", None)
             if runtime is not None:
-                run = await runtime.start_run(thread_id, message.prompt)
+                try:
+                    run = await runtime.start_run(thread_id, message.prompt)
+                except ActiveRunError as active:
+                    await runtime.steer(active.run_id, message.prompt)
+                    run = runtime.get_run(active.run_id)
                 run = await runtime.wait(run.id)
                 if run.status != "completed" or not run.final_response:
                     raise CodexServiceError(run.error or "Codex finished without a final response")
@@ -352,11 +369,19 @@ def create_app(
 
     @app.get("/api/health")
     async def health(request: Request) -> dict[str, Any]:
+        runtime = getattr(request.app.state, "runtime", None)
         return {
             "status": "ok",
             "dashboard": True,
             "codex_sdk": hasattr(request.app.state, "codex"),
             "agent_worker": bool(getattr(request.app.state, "worker_ready", False)),
+            "desktop_ipc": runtime.desktop_health() if runtime else {
+                "mode": "off",
+                "socket_present": False,
+                "compatible": None,
+                "connection_state": "disabled",
+                "last_error": None,
+            },
         }
 
     return app

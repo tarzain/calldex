@@ -119,6 +119,7 @@ class CalldexAgent(Agent):
         self._selected_thread_id: str | None = None
         self._selection_tasks: set[asyncio.Task[None]] = set()
         self._run_watchers: set[asyncio.Task[None]] = set()
+        self._watched_run_ids: set[str] = set()
         self._latest_threads: list[dict[str, Any]] = []
         self._latest_projects: list[dict[str, Any]] = []
         self._last_run_by_thread: dict[str, str] = {}
@@ -142,6 +143,10 @@ class CalldexAgent(Agent):
             raise ToolError("That Codex thread does not exist.") from exc
         except CodexServiceError as exc:
             raise ToolError("Codex could not validate that thread.") from exc
+        try:
+            await self._runtime.observe_thread(thread_id)
+        except CodexServiceError as exc:
+            raise ToolError("Codex desktop task ownership is temporarily unavailable.") from exc
         self._selected_thread_id = thread_id
         await self._publish_selection()
         thread = result["thread"]
@@ -182,9 +187,15 @@ class CalldexAgent(Agent):
         raise ToolError("I could not find that item in the latest list.")
 
     def _watch(self, run_id: str) -> None:
+        if run_id in self._watched_run_ids:
+            return
+        self._watched_run_ids.add(run_id)
         task = asyncio.create_task(self._announce_completion(run_id))
         self._run_watchers.add(task)
-        task.add_done_callback(self._run_watchers.discard)
+        def finished(completed: asyncio.Task[None]) -> None:
+            self._run_watchers.discard(completed)
+            self._watched_run_ids.discard(run_id)
+        task.add_done_callback(finished)
 
     async def _announce_completion(self, run_id: str) -> None:
         try:
@@ -329,12 +340,19 @@ class CalldexAgent(Agent):
             raise ToolError("Voice cannot enable full access.")
         self._selected_thread_id = selected
         await self._publish_selection()
+        try:
+            await self._runtime.observe_thread(selected)
+        except CodexServiceError as exc:
+            raise ToolError("Codex desktop task ownership is temporarily unavailable.") from exc
+        await self._publish_selection()
         active = self._runtime.active_run(selected)
         if active:
             try:
                 await self._runtime.steer(active.id, prompt)
             except CodexServiceError as exc:
                 raise ToolError("Codex could not steer that run.") from exc
+            self._last_run_by_thread[selected] = active.id
+            self._watch(active.id)
             return {"status": "steered", "run": active.summary()}
         try:
             run = await self._runtime.start_run(selected, prompt, access_mode=AccessMode(access_mode))
@@ -356,6 +374,11 @@ class CalldexAgent(Agent):
             raise ToolError("The action must be status or stop.")
         if not self._selected_thread_id:
             raise ToolError("Select a Codex thread first.")
+        try:
+            await self._runtime.observe_thread(self._selected_thread_id)
+        except CodexServiceError as exc:
+            raise ToolError("Codex desktop task ownership is temporarily unavailable.") from exc
+        await self._publish_selection()
         run = self._runtime.active_run(self._selected_thread_id)
         if run is None and self._selected_thread_id in self._last_run_by_thread:
             with contextlib.suppress(RunNotFoundError):
@@ -436,6 +459,7 @@ class CalldexAgent(Agent):
             task.cancel()
         if self._run_watchers:
             await asyncio.gather(*self._run_watchers, return_exceptions=True)
+        self._watched_run_ids.clear()
         if self._owns_runtime:
             await self._runtime.close()
 

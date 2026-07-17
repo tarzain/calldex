@@ -35,6 +35,20 @@ format mismatches with older Python SDK releases. Set `CALLDEX_CODEX_BIN` to an 
 Codex path to override that choice; when neither is available, the SDK's bundled runtime is
 used.
 
+When Codex Desktop is running, Calldex also detects its private same-user IPC socket and,
+when compatible, follows desktop-owned tasks by default. Messages, steering, interruption,
+and live task state then flow through the owning desktop window instead of a second Codex
+process. Tasks with no desktop owner continue through the supported Python SDK. If desktop
+ownership cannot be determined safely, Calldex rejects the send rather than risk starting a
+competing turn. Set `CALLDEX_DESKTOP_IPC=off` to disable the experimental bridge or
+`CALLDEX_DESKTOP_IPC=required` to make dashboard startup fail unless it is available.
+
+The bridge is intentionally local and unsupported: it validates the current protocol
+versions, requires a current-user private Unix socket, and never exposes IPC messages or
+client identifiers to the browser. A Codex Desktop update can require a Calldex compatibility
+update; `/api/health` reports the coarse bridge state without exposing local paths or task
+content.
+
 During a call, selecting a dashboard thread requests it as the voice thread. The agent validates and confirms the selection through LiveKit participant attributes. A selection made by voice opens the same thread in the browser.
 
 ## Voice tools

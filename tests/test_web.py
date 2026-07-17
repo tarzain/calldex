@@ -105,7 +105,19 @@ def test_api_errors_and_health() -> None:
         assert client.post("/api/threads/thread-1/messages", json={"prompt": "  "}).status_code == 422
         assert client.post("/api/threads/missing/messages", json={"prompt": "Hi"}).status_code == 404
         health = client.get("/api/health").json()
-        assert health == {"status": "ok", "dashboard": True, "codex_sdk": True, "agent_worker": True}
+        assert health == {
+            "status": "ok",
+            "dashboard": True,
+            "codex_sdk": True,
+            "agent_worker": True,
+            "desktop_ipc": {
+                "mode": "off",
+                "socket_present": False,
+                "compatible": None,
+                "connection_state": "disabled",
+                "last_error": None,
+            },
+        }
 
 
 def test_token_has_unique_rooms_explicit_dispatch_and_no_secrets(monkeypatch: Any) -> None:

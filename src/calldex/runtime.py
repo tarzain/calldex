@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import time
 import uuid
 from collections import deque
@@ -20,6 +21,14 @@ from .codex_service import (
     _bounded_json_value,
     _json_value,
     normalize_thread,
+)
+from .desktop_ipc import (
+    DesktopIpcBridge,
+    DesktopIpcError,
+    DesktopIpcIncompatible,
+    DesktopIpcMode,
+    DesktopIpcUnavailable,
+    DesktopOwner,
 )
 
 MAX_RUN_EVENTS = 500
@@ -57,6 +66,9 @@ class RunState:
     turn_id: str
     access_mode: AccessMode
     handle: Any
+    backend: str = "sdk"
+    connection_state: str = "connected"
+    owner_client_id: str | None = None
     status: str = "running"
     started_at: float = field(default_factory=time.time)
     completed_at: float | None = None
@@ -71,6 +83,7 @@ class RunState:
     completion: asyncio.Event = field(default_factory=asyncio.Event)
     task: asyncio.Task[None] | None = None
     _seq: int = 0
+    _item_fingerprints: dict[str, str] = field(default_factory=dict)
 
     def append(
         self,
@@ -103,6 +116,9 @@ class RunState:
             "turn_id": self.turn_id,
             "status": self.status,
             "access_mode": self.access_mode.value,
+            "backend": self.backend,
+            "connection_state": self.connection_state,
+            "owner_client_id": self.owner_client_id,
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "final_response": self.final_response,
@@ -116,13 +132,35 @@ class RunState:
 class CodexRuntime:
     """One Codex client shared by the dashboard and all voice sessions."""
 
-    def __init__(self, client: Any, *, default_cwd: str | Path) -> None:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        default_cwd: str | Path,
+        desktop_bridge: DesktopIpcBridge | None = None,
+    ) -> None:
         self.client = client
         self.default_cwd = str(Path(default_cwd).expanduser().resolve())
         self.service = CodexService(client)
         self.runs: dict[str, RunState] = {}
         self.active_by_thread: dict[str, str] = {}
+        self.desktop_bridge = desktop_bridge or DesktopIpcBridge(mode=DesktopIpcMode.off)
+        self._desktop_handler_removers = [
+            self.desktop_bridge.add_broadcast_handler(
+                "thread-stream-state-changed", self._on_desktop_stream_state
+            ),
+            self.desktop_bridge.add_broadcast_handler(
+                "ipc-connection-reset", self._on_desktop_connection_reset
+            ),
+        ]
+        self._desktop_reconnect_task: asyncio.Task[None] | None = None
         self._closed = False
+
+    async def start(self) -> None:
+        await self.desktop_bridge.start()
+
+    def desktop_health(self) -> dict[str, Any]:
+        return self.desktop_bridge.health()
 
     def _cleanup(self) -> None:
         cutoff = time.time() - COMPLETED_RUN_TTL_SECONDS
@@ -150,6 +188,195 @@ class CodexRuntime:
             self.active_by_thread.pop(thread_id, None)
             return None
         return run
+
+    @staticmethod
+    def _desktop_turns(state: dict[str, Any]) -> list[dict[str, Any]]:
+        turns = state.get("turns")
+        if isinstance(turns, list):
+            loaded = [turn for turn in turns if isinstance(turn, dict)]
+            if loaded:
+                return loaded
+        history = state.get("turnHistory")
+        if isinstance(history, dict):
+            canonical = history.get("history")
+            entities = canonical.get("entitiesByKey") if isinstance(canonical, dict) else None
+            if isinstance(entities, dict):
+                return [turn for turn in entities.values() if isinstance(turn, dict)]
+        return []
+
+    @staticmethod
+    def _desktop_turn_id(turn: dict[str, Any]) -> str:
+        return str(turn.get("turnId") or turn.get("id") or "")
+
+    @staticmethod
+    def _desktop_turn_status(turn: dict[str, Any]) -> str:
+        status = str(turn.get("status") or "").lower()
+        return {
+            "inprogress": "running",
+            "in_progress": "running",
+            "completed": "completed",
+            "interrupted": "interrupted",
+            "failed": "failed",
+        }.get(status, status or "running")
+
+    @staticmethod
+    def _desktop_items(turn: dict[str, Any]) -> list[dict[str, Any]]:
+        items = turn.get("items")
+        if isinstance(items, list):
+            return [item for item in items if isinstance(item, dict)]
+        return []
+
+    def _new_desktop_run(
+        self,
+        thread_id: str,
+        turn_id: str,
+        owner: DesktopOwner,
+        *,
+        access_mode: AccessMode = AccessMode.workspace_write,
+    ) -> RunState:
+        run = RunState(
+            id=uuid.uuid4().hex,
+            thread_id=thread_id,
+            turn_id=turn_id or f"desktop-{uuid.uuid4().hex}",
+            access_mode=access_mode,
+            handle=None,
+            backend="desktop_ipc",
+            connection_state="connected",
+            owner_client_id=owner.client_id,
+        )
+        self.runs[run.id] = run
+        self.active_by_thread[thread_id] = run.id
+        run.append("run.attached", {"backend": "desktop_ipc"})
+        return run
+
+    def _sync_desktop_owner(self, thread_id: str, owner: DesktopOwner) -> RunState | None:
+        turns = self._desktop_turns(owner.conversation_state)
+        latest = turns[-1] if turns else None
+        active = self.active_run(thread_id)
+        if latest is None:
+            return active
+        turn_id = self._desktop_turn_id(latest)
+        status = self._desktop_turn_status(latest)
+        if status == "running" and (active is None or active.backend != "desktop_ipc"):
+            if active is not None:
+                return active
+            active = self._new_desktop_run(thread_id, turn_id, owner)
+        if active is None or active.backend != "desktop_ipc":
+            return active
+        active.owner_client_id = owner.client_id
+        active.connection_state = "connected"
+        if turn_id and active.turn_id.startswith("desktop-"):
+            active.turn_id = turn_id
+        if turn_id and active.turn_id != turn_id and status == "running":
+            active = self._new_desktop_run(thread_id, turn_id, owner, access_mode=active.access_mode)
+        self._sync_desktop_items(active, latest, turn_status=status)
+        if status != "running" and active.status == "running":
+            active.status = status
+            active.completed_at = time.time()
+            if self.active_by_thread.get(thread_id) == active.id:
+                self.active_by_thread.pop(thread_id, None)
+            active.append(
+                "run.finished",
+                {
+                    "status": active.status,
+                    "final_response": active.final_response,
+                    "error": active.error,
+                },
+            )
+            active.completion.set()
+        return active
+
+    def _sync_desktop_items(
+        self, run: RunState, turn: dict[str, Any], *, turn_status: str
+    ) -> None:
+        for item in self._desktop_items(turn):
+            item_id = str(item.get("id") or "")
+            if not item_id:
+                continue
+            try:
+                fingerprint = json.dumps(item, sort_keys=True, default=str)
+            except TypeError:
+                fingerprint = repr(item)
+            previous = run._item_fingerprints.get(item_id)
+            if previous == fingerprint:
+                continue
+            run._item_fingerprints[item_id] = fingerprint
+            status = str(item.get("status") or "").lower()
+            event_type = "item.completed" if turn_status != "running" or status in {
+                "completed", "failed", "declined", "interrupted"
+            } else "item.started" if previous is None else "item.updated"
+            run.append(event_type, {"item": item}, item_id=item_id)
+            item_type = item.get("type")
+            if item_type == "agentMessage":
+                text = str(item.get("text") or "").strip()
+                phase = item.get("phase")
+                if text and phase in (None, "finalAnswer", "final_answer"):
+                    run.final_response = text
+            elif item_type == "plan":
+                plan = item.get("plan")
+                if isinstance(plan, list):
+                    run.plan = plan
+            elif item_type == "fileChange":
+                diff = item.get("diff")
+                if isinstance(diff, str):
+                    run.diff = diff
+
+    async def observe_thread(self, thread_id: str) -> RunState | None:
+        if self.desktop_bridge.mode == DesktopIpcMode.off:
+            return self.active_run(thread_id)
+        try:
+            owner = await self.desktop_bridge.follow(thread_id)
+        except DesktopIpcError as exc:
+            active = self.active_run(thread_id)
+            if active is not None and active.backend == "desktop_ipc":
+                active.connection_state = "reconnecting"
+                active.append("run.connection.changed", {"state": "reconnecting", "error": str(exc)})
+            raise CodexServiceError("Codex desktop ownership could not be determined") from exc
+        if owner is None:
+            return self.active_run(thread_id)
+        return self._sync_desktop_owner(thread_id, owner)
+
+    async def _on_desktop_stream_state(self, message: dict[str, Any]) -> None:
+        params = message.get("params")
+        thread_id = params.get("conversationId") if isinstance(params, dict) else None
+        if not isinstance(thread_id, str):
+            return
+        owner = self.desktop_bridge.snapshot(thread_id)
+        if owner is not None:
+            self._sync_desktop_owner(thread_id, owner)
+
+    async def _on_desktop_connection_reset(self, _: dict[str, Any]) -> None:
+        desktop_runs = [
+            run for run in self.runs.values()
+            if run.backend == "desktop_ipc" and run.status == "running"
+        ]
+        for run in desktop_runs:
+            run.connection_state = "reconnecting"
+            run.append("run.connection.changed", {"state": "reconnecting"})
+        if desktop_runs and (self._desktop_reconnect_task is None or self._desktop_reconnect_task.done()):
+            self._desktop_reconnect_task = asyncio.create_task(
+                self._reconnect_desktop_runs(), name="calldex-desktop-reconnect"
+            )
+
+    async def _reconnect_desktop_runs(self) -> None:
+        delay = 0.25
+        while not self._closed:
+            runs = [
+                run for run in self.runs.values()
+                if run.backend == "desktop_ipc" and run.status == "running"
+            ]
+            if not runs:
+                return
+            try:
+                await self.desktop_bridge.ensure_connected()
+                for run in runs:
+                    owner = await self.desktop_bridge.follow(run.thread_id)
+                    if owner is not None:
+                        self._sync_desktop_owner(run.thread_id, owner)
+                return
+            except DesktopIpcError:
+                await asyncio.sleep(delay)
+                delay = min(delay * 2, 5.0)
 
     async def list_projects(self) -> list[dict[str, Any]]:
         projects: dict[str, dict[str, Any]] = {
@@ -240,6 +467,61 @@ class CodexRuntime:
         run.task = asyncio.create_task(self._consume(run), name=f"codex-run-{run.id}")
         return run
 
+    def _desktop_sandbox_policy(
+        self, access_mode: AccessMode, owner: DesktopOwner
+    ) -> dict[str, Any]:
+        cwd = owner.conversation_state.get("cwd") or self.default_cwd
+        if access_mode == AccessMode.read_only:
+            return {"type": "readOnly", "networkAccess": False}
+        if access_mode == AccessMode.full_access:
+            return {"type": "dangerFullAccess"}
+        return {
+            "type": "workspaceWrite",
+            "writableRoots": [str(cwd)],
+            "networkAccess": False,
+            "excludeSlashTmp": False,
+            "excludeTmpdirEnvVar": False,
+        }
+
+    async def _start_desktop_run(
+        self,
+        thread_id: str,
+        prompt: str,
+        access_mode: AccessMode,
+        owner: DesktopOwner,
+    ) -> RunState:
+        sandbox_policy = self._desktop_sandbox_policy(access_mode, owner)
+        try:
+            await self.desktop_bridge.update_thread_settings(
+                thread_id, owner.client_id, {"sandboxPolicy": sandbox_policy}
+            )
+            await self.desktop_bridge.start_turn(
+                thread_id,
+                owner.client_id,
+                prompt,
+                turn_start_params={
+                    "input": [{"type": "text", "text": prompt, "text_elements": []}],
+                    "cwd": owner.conversation_state.get("cwd") or self.default_cwd,
+                    "sandboxPolicy": sandbox_policy,
+                    "clientUserMessageId": str(uuid.uuid4()),
+                },
+            )
+        except DesktopIpcError as exc:
+            raise CodexServiceError("Codex desktop could not start that run") from exc
+        # The owner publishes the canonical turn id shortly after accepting the
+        # request.  Use a provisional id so callers can subscribe immediately.
+        refreshed = self.desktop_bridge.snapshot(thread_id) or owner
+        run = self.active_run(thread_id)
+        if run is None:
+            run = self._new_desktop_run(
+                thread_id, "", refreshed, access_mode=access_mode
+            )
+        run.append(
+            "run.started",
+            {"prompt": prompt, "access_mode": access_mode.value, "backend": "desktop_ipc"},
+        )
+        return run
+
     async def start_run(
         self,
         thread_id: str,
@@ -249,6 +531,24 @@ class CodexRuntime:
     ) -> RunState:
         if self.active_run(thread_id) is not None:
             raise ActiveRunError(self.active_by_thread[thread_id])
+        if self.desktop_bridge.mode != DesktopIpcMode.off:
+            try:
+                owner = await self.desktop_bridge.follow(thread_id)
+            except DesktopIpcUnavailable as exc:
+                if self.desktop_bridge.socket_present:
+                    raise CodexServiceError(
+                        "Codex desktop ownership is temporarily unavailable; no fallback run was started"
+                    ) from exc
+                owner = None
+            except DesktopIpcIncompatible as exc:
+                raise CodexServiceError(
+                    "This Codex desktop version is not compatible with Calldex IPC"
+                ) from exc
+            if owner is not None:
+                observed = self._sync_desktop_owner(thread_id, owner)
+                if observed is not None and observed.status == "running":
+                    raise ActiveRunError(observed.id)
+                return await self._start_desktop_run(thread_id, prompt, access_mode, owner)
         try:
             thread = await self.client.thread_resume(
                 thread_id,
@@ -343,7 +643,14 @@ class CodexRuntime:
         if not prompt:
             raise ValueError("prompt is required")
         try:
-            await run.handle.steer(prompt)
+            if run.backend == "desktop_ipc":
+                if not run.owner_client_id:
+                    raise DesktopIpcUnavailable("Desktop task owner is unavailable")
+                await self.desktop_bridge.steer_turn(
+                    run.thread_id, run.owner_client_id, prompt
+                )
+            else:
+                await run.handle.steer(prompt)
         except Exception as exc:
             raise CodexServiceError("Codex could not steer that run") from exc
         run.append("run.steered", {"prompt": prompt})
@@ -354,7 +661,12 @@ class CodexRuntime:
         if run.status != "running":
             return run.summary()
         try:
-            await run.handle.interrupt()
+            if run.backend == "desktop_ipc":
+                if not run.owner_client_id:
+                    raise DesktopIpcUnavailable("Desktop task owner is unavailable")
+                await self.desktop_bridge.interrupt_turn(run.thread_id, run.owner_client_id)
+            else:
+                await run.handle.interrupt()
         except Exception as exc:
             raise CodexServiceError("Codex could not interrupt that run") from exc
         run.append("run.interrupt.requested", {})
@@ -408,6 +720,8 @@ class CodexRuntime:
         return detail["thread"]
 
     async def archive_thread(self, thread_id: str) -> None:
+        if self.desktop_bridge.mode != DesktopIpcMode.off:
+            await self.observe_thread(thread_id)
         if self.active_run(thread_id) is not None:
             raise ActiveRunError(self.active_by_thread[thread_id])
         try:
@@ -419,10 +733,17 @@ class CodexRuntime:
         if self._closed:
             return
         self._closed = True
+        if self._desktop_reconnect_task is not None:
+            self._desktop_reconnect_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._desktop_reconnect_task
         active = [run for run in self.runs.values() if run.status == "running"]
         for run in active:
             with contextlib.suppress(Exception):
-                await run.handle.interrupt()
+                if run.backend == "desktop_ipc" and run.owner_client_id:
+                    await self.desktop_bridge.interrupt_turn(run.thread_id, run.owner_client_id)
+                elif run.handle is not None:
+                    await run.handle.interrupt()
         tasks = [run.task for run in active if run.task is not None]
         if tasks:
             done, pending = await asyncio.wait(tasks, timeout=10)
@@ -433,6 +754,9 @@ class CodexRuntime:
             for task in done:
                 with contextlib.suppress(Exception):
                     task.result()
+        for remove in self._desktop_handler_removers:
+            remove()
+        await self.desktop_bridge.close()
         close = getattr(self.client, "close", None)
         if close is not None:
             await close()

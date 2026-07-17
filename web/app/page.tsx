@@ -151,6 +151,9 @@ type RunSummary = {
   turn_id: string;
   status: string;
   access_mode: AccessMode;
+  backend: "desktop_ipc" | "sdk";
+  connection_state: string;
+  owner_client_id?: string | null;
   started_at: number;
   completed_at: number | null;
   final_response: string | null;
@@ -338,7 +341,12 @@ function LiveActivity({ run, events }: { run: RunSummary | null; events: RunEven
   return (
     <section className="live-run" aria-label="Live Codex run">
       {userPrompts.map((event) => <Message from="user" className="live-user-message" key={`${event.type}-${event.seq}`}><MessageContent><p>{String(event.payload.prompt || "")}</p></MessageContent></Message>)}
-      <div className="live-run-heading"><span className="live-dot" />Codex is {run?.status || "working"}</div>
+      <div className="live-run-heading">
+        <span className="live-dot" />
+        Codex is {run.connection_state === "reconnecting" ? "reconnecting" : run.status || "working"}
+        <Badge variant="outline" className="execution-backend">{run.backend === "desktop_ipc" ? "Desktop" : "SDK"}</Badge>
+        {run.connection_state === "reconnecting" && <Button variant="ghost" size="sm" onClick={() => window.location.reload()}>Retry</Button>}
+      </div>
       {plan.length > 0 && (
         <Plan defaultOpen isStreaming={run?.status === "running"} className="live-plan">
           <PlanHeader><PlanTitle>Plan</PlanTitle><PlanTrigger /></PlanHeader>
@@ -493,7 +501,8 @@ const Timeline = memo(function Timeline({ detail, loading, error, run, liveEvent
           <Button variant="ghost" size="icon-sm" aria-label="Toggle task details" aria-expanded={showInspector} onClick={() => setShowInspector((value) => !value)}><MoreHorizontal /></Button>
         </div>
         <div className="task-actions">
-          {run?.status === "running" && <Badge className="run-badge"><span />Running</Badge>}
+          {run?.status === "running" && <Badge className="run-badge"><span />{run.connection_state === "reconnecting" ? "Reconnecting" : "Running"}</Badge>}
+          {run?.status === "running" && <Badge variant="outline" className="execution-backend">{run.backend === "desktop_ipc" ? "Desktop" : "SDK"}</Badge>}
           <Button variant="ghost" size="icon-sm" title="Rename task" onClick={onRename}><Pencil /></Button>
           <Button variant="ghost" size="icon-sm" title="Fork task" onClick={onFork}><GitFork /></Button>
           <Button variant="ghost" size="icon-sm" title="Archive task" onClick={onArchive}><Archive /></Button>
