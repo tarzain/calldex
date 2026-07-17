@@ -50,7 +50,8 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /calldex\.viewedThreadId/);
   assert.match(page, /calldex\.requestedThreadId/);
   assert.match(page, /calldex\.activeThreadId/);
-  assert.match(page, /JSON\.stringify\(event\.details/);
+  assert.doesNotMatch(page, /JSON details/);
+  assert.doesNotMatch(page, /JSON\.stringify\(event\.details/);
   assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
   assert.match(page, /ArrowDown/);
   assert.match(page, /setMicrophoneEnabled/);
@@ -61,7 +62,7 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /@\/components\/ai-elements\/prompt-input/);
   assert.match(page, /@\/components\/ai-elements\/reasoning/);
   assert.match(page, /@\/components\/ai-elements\/plan/);
-  assert.match(page, /@\/components\/ai-elements\/tool/);
+  assert.match(page, /@\/components\/calldex\/tool-activity/);
   assert.match(page, /@\/components\/ai-elements\/conversation/);
   assert.match(page, /@\/components\/ai-elements\/message/);
   assert.match(page, /@\/components\/ai-elements\/persona/);
@@ -79,6 +80,9 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /open=\{active\}/);
   assert.match(page, /latestTurnHasFinal/);
   assert.match(page, /event\.phase === "commentary"/);
+  assert.match(page, /isToolEventType\(event\.type\)/);
+  assert.match(page, /normalizeLiveTools\(events\)/);
+  assert.match(page, /<ToolActivityGroup/);
   assert.match(page, /Search activity/);
   assert.match(page, /className="voice-float"/);
   assert.match(page, /messages\.at\(-1\)/);

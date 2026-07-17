@@ -89,8 +89,7 @@ import {
 } from "@/components/ai-elements/prompt-input";
 import { Reasoning, ReasoningContent, ReasoningTrigger } from "@/components/ai-elements/reasoning";
 import { Plan, PlanContent, PlanHeader, PlanTitle, PlanTrigger } from "@/components/ai-elements/plan";
-import { Tool, ToolContent } from "@/components/ai-elements/tool";
-import { CodeBlock } from "@/components/ai-elements/code-block";
+import { ToolActivityGroup } from "@/components/calldex/tool-activity";
 import {
   Confirmation,
   ConfirmationAction,
@@ -99,6 +98,12 @@ import {
   ConfirmationTitle,
 } from "@/components/ai-elements/confirmation";
 import { mergeRunEvent, optimisticUserEvent, type RunEvent } from "@/lib/run-events";
+import {
+  groupConsecutiveTools,
+  isToolEventType,
+  normalizeLiveTools,
+  normalizePersistedTool,
+} from "@/lib/tool-activity";
 
 type ThreadSummary = {
   id: string;
@@ -244,11 +249,18 @@ const WorkSummary = memo(function WorkSummary({ events, active }: { events: Time
   }, [active]);
 
   const duration = workedDuration(events, active ? now : undefined);
+  const entries = useMemo(() => groupConsecutiveTools(
+    events,
+    (event) => isToolEventType(event.type),
+    (event, index) => normalizePersistedTool(event, index),
+  ), [events]);
   return (
     <details className={`work-summary${active ? " working" : ""}`} open={active}>
       <summary>{active ? "Working" : "Worked"}{duration ? ` for ${duration}` : ""}<ChevronRight size={15} /></summary>
       <div className="work-updates">
-        {events.map((event) => <MessageResponse className="message-response" key={event.id}>{event.summary}</MessageResponse>)}
+        {entries.map((entry) => entry.kind === "tools"
+          ? <ToolActivityGroup group={entry.group} key={`tools-${entry.group.id}`} />
+          : <MessageResponse className="message-response" key={entry.item.id}>{entry.item.summary}</MessageResponse>)}
       </div>
     </details>
   );
@@ -256,7 +268,7 @@ const WorkSummary = memo(function WorkSummary({ events, active }: { events: Time
 
 function eventCategory(type: string) {
   if (type === "userMessage" || type === "agentMessage") return "messages";
-  if (type === "commandExecution" || type.includes("ToolCall") || type === "webSearch") return "tools";
+  if (isToolEventType(type)) return type === "fileChange" ? "changes" : "tools";
   if (type === "fileChange") return "changes";
   return "system";
 }
@@ -312,7 +324,7 @@ async function patchApi<T>(path: string, body: unknown): Promise<T> {
 }
 
 function LiveActivity({ run, events }: { run: RunSummary | null; events: RunEvent[] }) {
-  if (!run && events.length === 0) return null;
+  if (run?.status !== "running") return null;
   const currentPlan = [...events].reverse().find((event) => event.type === "turn.plan.updated");
   const planPayload = currentPlan?.payload.plan;
   const plan = Array.isArray(planPayload) ? planPayload as Array<{ step?: string; status?: string }> : run?.plan || [];
@@ -320,9 +332,7 @@ function LiveActivity({ run, events }: { run: RunSummary | null; events: RunEven
     .filter((event) => event.type.includes("reasoning") || event.type.includes("agentMessage.delta"))
     .map((event) => String(event.payload.delta || event.payload.text || ""))
     .join("");
-  const tools = events.filter((event) =>
-    event.type.includes("commandExecution") || event.type.includes("mcpToolCall") || event.type.includes("fileChange"),
-  ).slice(-8);
+  const tools = normalizeLiveTools(events);
   const userPrompts = events.filter((event) => event.type === "ui.user_message" || event.type === "run.started" || event.type === "run.steered");
 
   return (
@@ -341,17 +351,7 @@ function LiveActivity({ run, events }: { run: RunSummary | null; events: RunEven
           <ReasoningContent>{reasoning}</ReasoningContent>
         </Reasoning>
       )}
-      {tools.map((event) => {
-        const item = (event.payload.item || event.payload) as Record<string, unknown>;
-        const command = String(item.command || item.tool || item.type || "Codex tool");
-        const output = String(item.aggregatedOutput || item.output || "");
-        return (
-          <Tool className="live-tool" defaultOpen={event.type.includes("outputDelta")} key={`${event.seq}-${event.item_id}`}>
-            <div className="live-tool-header"><Wrench size={14} /><span>{command}</span><Badge variant="secondary">{String(item.status || "running")}</Badge></div>
-            <ToolContent>{output ? <CodeBlock code={output} language="shell" /> : <pre>{JSON.stringify(item, null, 2)}</pre>}</ToolContent>
-          </Tool>
-        );
-      })}
+      {tools.length > 0 && <ToolActivityGroup group={{ id: `live-${run.run_id}`, activities: tools }} />}
     </section>
   );
 }
@@ -432,7 +432,9 @@ const Timeline = memo(function Timeline({ detail, loading, error, run, liveEvent
   const filteredEvents = useMemo(() => {
     const needle = query.trim().toLowerCase();
     return detail?.events.filter((event) => {
-      if (filter !== "all" && eventCategory(event.type) !== filter) return false;
+      if (filter === "messages" && eventCategory(event.type) !== "messages" && !isToolEventType(event.type)) return false;
+      if (filter === "tools" && !isToolEventType(event.type)) return false;
+      if (filter !== "all" && filter !== "messages" && filter !== "tools" && eventCategory(event.type) !== filter) return false;
       return !needle || `${event.title} ${event.summary} ${event.type}`.toLowerCase().includes(needle);
     }) || [];
   }, [detail, filter, query]);
@@ -442,14 +444,20 @@ const Timeline = memo(function Timeline({ detail, loading, error, run, liveEvent
     parts: [{ type: "text", text: event.summary }],
   })), [filteredEvents]);
   const timelineEntries = useMemo(() => {
-    if (filter !== "messages") return filteredEvents.map((event) => ({ kind: "event" as const, event }));
+    if (filter !== "messages") return groupConsecutiveTools(
+      filteredEvents,
+      (event) => isToolEventType(event.type),
+      (event, index) => normalizePersistedTool(event, index),
+    ).map((entry) => entry.kind === "tools"
+      ? { kind: "tools" as const, group: entry.group }
+      : { kind: "event" as const, event: entry.item });
     const entries: Array<
       { kind: "event"; event: TimelineEvent } |
       { kind: "work"; turnId: string; events: TimelineEvent[] }
     > = [];
     const workByTurn = new Map<string, { kind: "work"; turnId: string; events: TimelineEvent[] }>();
     for (const event of filteredEvents) {
-      if (event.type === "agentMessage" && event.phase === "commentary") {
+      if ((event.type === "agentMessage" && event.phase === "commentary") || isToolEventType(event.type)) {
         let group = workByTurn.get(event.turn_id);
         if (!group) {
           group = { kind: "work", turnId: event.turn_id, events: [] };
@@ -515,8 +523,12 @@ const Timeline = memo(function Timeline({ detail, loading, error, run, liveEvent
               events={entry.events}
               key={`work-${entry.turnId}`}
             />
+          ) : entry.kind === "tools" ? (
+            <ToolActivityGroup group={entry.group} key={`tools-${entry.group.id}`} />
           ) : (() => {
             const event = entry.event;
+            const activity = normalizePersistedTool(event);
+            if (activity) return <ToolActivityGroup group={{ id: activity.id, activities: [activity] }} key={`tool-${activity.id}`} />;
             return (
             <Message from={eventRole(event.type)} className={`event event-${event.type}`} key={`${event.turn_id}-${event.id}`}>
               <MessageContent className="event-body">
@@ -526,10 +538,6 @@ const Timeline = memo(function Timeline({ detail, loading, error, run, liveEvent
                 <time>{event.timestamp ? new Date(event.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }) : ""}</time>
               </div>
               {eventCategory(event.type) === "messages" ? <MessageResponse className="message-response">{event.summary}</MessageResponse> : <p>{event.summary}</p>}
-              <details>
-                <summary><Braces size={11} /> JSON details</summary>
-                <div className="json-panel"><Button variant="ghost" size="icon-sm" aria-label="Copy event JSON" onClick={() => void copy(JSON.stringify(event.details, null, 2), event.id)}>{copied === event.id ? <Check /> : <Copy />}</Button><pre>{JSON.stringify(event.details, null, 2)}</pre></div>
-              </details>
               </MessageContent>
               {eventCategory(event.type) === "messages" && (
                 <MessageActions className="message-actions">
