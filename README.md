@@ -44,3 +44,7 @@ Codex currently appears in Gemini as two MCP tools:
 
 - `codex`: start a Codex session from an initial prompt.
 - `codex-reply`: continue an existing Codex session by thread ID.
+
+## Future remote access
+
+Calldex is intentionally loopback-only today. A deferred design for authenticated browser access through native host and device pairing is documented in [docs/remote-connectivity-plan.md](docs/remote-connectivity-plan.md).
