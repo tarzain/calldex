@@ -700,3 +700,112 @@ button { color: inherit; font: inherit; }
   .voice-float { bottom: calc(100% + 8px); }
   .task-actions { margin-right: 32px; }
 }
+
+/* Readability pass: stronger hierarchy and the clearer surface rhythm of Codex. */
+.dashboard { grid-template-columns: 300px minmax(0, 1fr); }
+.sidebar { background: #202020; border-right-color: #303030; }
+.brand { height: 62px; padding: 0 16px; background: #202020; }
+.brand strong { color: #f1f1f1; font-size: 15px; font-weight: 650; }
+.brand span { color: #a0a0a0; font-size: 10.5px; }
+.sidebar-primary { padding: 13px 11px 9px; }
+.sidebar-primary > button:first-child { min-height: 35px; color: #ededed; font-size: 13px; font-weight: 520; }
+.thread-search { margin: 0 11px 6px; }
+.thread-search input { height: 36px; background: #292929; color: #ededed; font-size: 12px; }
+.thread-search input::placeholder { color: #969696; }
+.sidebar-heading { padding: 17px 16px 8px; color: #929292; font-size: 11px; }
+.repo-group { margin-bottom: 10px; }
+.repo-heading { min-height: 32px; padding: 5px 9px; color: #c8c8c8; }
+.repo-heading span { font-size: 12.5px; font-weight: 520; }
+.thread-row { min-height: 34px; padding: 8px 11px 8px 36px; border-radius: 8px; }
+.thread-title { color: #e2e2e2; font-size: 12.5px; font-weight: 480; }
+.thread-row.selected { background: #383838; }
+.sidebar-footer { min-height: 39px; color: #949494; font-size: 9.5px; }
+
+.timeline-header { min-height: 54px; height: 54px; flex-basis: 54px; padding: 0 18px; border-bottom-color: #2d2d2d; background: #181818fa; }
+.timeline-header h1 { color: #eeeeee; font-size: 14px; font-weight: 620; }
+.thread-heading-copy { color: #d0d0d0; }
+.task-actions button { color: #999; }
+.task-actions button:hover { color: #eee; }
+.thread-conversation { color: #ededed; }
+.timeline { width: calc(100% - 64px); max-width: 820px; padding: 32px 0 36px; }
+.event { margin-bottom: 24px; }
+.event-agentMessage { margin-bottom: 34px; }
+.event-userMessage { margin: 12px 0 30px; }
+.event-userMessage .event-body { padding: 10px 14px; background: #303030; }
+.event-body > p, .message-response { color: #ededed; font-size: 14.5px; line-height: 1.62; font-weight: 420; }
+.message-response p { margin-bottom: 14px; }
+.message-response ul, .message-response ol { margin: 12px 0 17px; padding-left: 25px; }
+.message-response li { margin: 8px 0; padding-left: 2px; }
+.message-response code { background: #333; color: #f0f0f0; }
+.work-summary { margin: 7px 0 29px; color: #a4a4a4; border-color: #303030; }
+.work-summary > summary { padding-bottom: 12px; font-size: 13.5px; }
+.work-summary.working > summary { color: #c4c4c4; }
+.work-updates { gap: 13px; color: #c0c0c0; }
+.work-updates .message-response { color: #c8c8c8; font-size: 13.5px; line-height: 1.6; }
+.tool-activity-summary { color: #aaa; font-size: 13px; }
+.tool-activity-row-trigger { color: #a2a2a2; font-size: 12px; }
+.message-actions button { color: #929292; }
+
+.composer-dock { padding: 12px 32px 17px; }
+.composer { max-width: 820px; }
+.composer > [data-slot="input-group"] { padding: 11px 13px 9px; border-color: #484848; background: #2c2c2c; box-shadow: 0 12px 38px #0005 !important; }
+.composer textarea { min-height: 45px; color: #f0f0f0; font-size: 14px; }
+.composer textarea::placeholder { color: #8d8d8d; }
+.access-mode { font-size: 11px; font-weight: 530; }
+.composer-hint { color: #858585; font-size: 10px; }
+
+/* Codex light mode uses a clean white workspace and a subtly separated rail. */
+.light {
+  --bg: #ffffff;
+  --panel: #f6f6f5;
+  --panel-2: #eeeeec;
+  --line: #dfdfdc;
+  --muted-text: #666663;
+  --text: #191919;
+}
+.light body, .light .dashboard, .light .workspace, .light .call-panel { background: #fff; color: #191919; }
+.light .sidebar, .light .brand { background: #f6f6f5; }
+.light .sidebar { border-right-color: #dfdfdc; }
+.light .brand strong, .light .sidebar-primary > button:first-child { color: #242424; }
+.light .brand span, .light .brand > button, .light .sidebar-footer { color: #666663; }
+.light .sidebar-primary > button:first-child:hover, .light .thread-row:hover { background: #ebebea; }
+.light .thread-search input { border: 1px solid #e5e5e2; background: #ededeb; color: #1d1d1d; }
+.light .thread-search input::placeholder { color: #737370; }
+.light .thread-search kbd { border-color: #cececa; background: #f7f7f5; color: #656562; }
+.light .sidebar-heading { color: #6f6f6c; }
+.light .repo-heading { color: #3a3a38; }
+.light .thread-title { color: #242424; }
+.light .thread-row.selected { background: #e5e5e3; }
+.light .sidebar-footer { border-color: #dfdfdc; }
+.light .timeline-header { border-bottom-color: #e5e5e2; background: #fffffffa; }
+.light .thread-heading-copy, .light .timeline-header h1 { color: #242424; }
+.light .task-actions button { color: #686865; }
+.light .task-actions button:hover { background: #f0f0ee; color: #181818; }
+.light .thread-conversation { color: #191919; }
+.light .event-userMessage .event-body { background: #f0f0ee; }
+.light .event-body > p, .light .message-response { color: #1d1d1d; }
+.light .message-response code { background: #ededeb; color: #202020; }
+.light .work-summary { color: #686865; border-color: #e5e5e2; }
+.light .work-summary.working > summary { color: #424240; }
+.light .work-updates, .light .work-updates .message-response { color: #3e3e3c; }
+.light .tool-activity-summary, .light .tool-activity-row-trigger { color: #666663; }
+.light .message-actions button { color: #696966; }
+.light .composer-dock { background: linear-gradient(to bottom, #ffffff00, #fff 17px); }
+.light .composer > [data-slot="input-group"] { border-color: #d4d4d0; background: #fff; box-shadow: 0 12px 36px #00000014 !important; }
+.light .composer > [data-slot="input-group"]:focus-within { border-color: #aaa9a5; box-shadow: 0 12px 36px #00000014, 0 0 0 1px #00000008 !important; }
+.light .composer textarea { color: #191919; }
+.light .composer textarea::placeholder { color: #777774; }
+.light .composer-hint { color: #737370; }
+
+@media (max-width: 1050px) {
+  .dashboard { grid-template-columns: 260px minmax(0, 1fr); }
+  .timeline, .composer { max-width: 760px; }
+}
+
+@media (max-width: 820px) {
+  .dashboard { display: block; }
+  .timeline { width: calc(100% - 30px); padding-top: 22px; }
+  .timeline-header { min-height: 54px; height: 54px; padding: 0 14px 0 52px; align-items: center; }
+  .composer-dock { padding: 0; }
+  .event-body > p, .message-response { font-size: 14px; }
+}
