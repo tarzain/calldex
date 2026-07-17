@@ -23,8 +23,8 @@ test("server-renders the local dashboard shell", async () => {
   assert.match(html, /Recent tasks/);
   assert.match(html, /New task/);
   assert.match(html, /Search tasks and repositories/);
-  assert.match(html, />Voice</);
-  assert.match(html, /Transcript/);
+  assert.match(html, /Start voice call/);
+  assert.doesNotMatch(html, /TranscriptWaiting for connection/);
   assert.match(html, /Select a task to continue/);
 });
 
@@ -46,7 +46,7 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /selected\?\.updated_at !== detailUpdatedAtRef\.current/);
   assert.doesNotMatch(page, /void loadThreads\(\); if \(selectedRef\.current\) void loadDetail/);
   assert.match(page, /const Timeline = memo/);
-  assert.match(page, /const CallPanel = memo/);
+  assert.match(page, /const VoiceComposer = memo/);
   assert.match(page, /calldex\.viewedThreadId/);
   assert.match(page, /calldex\.requestedThreadId/);
   assert.match(page, /calldex\.activeThreadId/);
@@ -80,7 +80,11 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /latestTurnHasFinal/);
   assert.match(page, /event\.phase === "commentary"/);
   assert.match(page, /Search activity/);
-  assert.match(page, /className="voice-context"/);
+  assert.match(page, /className="voice-float"/);
+  assert.match(page, /messages\.at\(-1\)/);
+  assert.match(page, /voiceVisible \? \(/);
+  assert.match(page, /voiceButton=\{voiceButton\}/);
+  assert.doesNotMatch(page, /className="call-panel"/);
   assert.match(page, /new EventSource/);
   assert.match(page, /\/turns/);
   assert.match(page, /\/steer/);

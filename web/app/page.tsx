@@ -23,7 +23,6 @@ import {
   Folder,
   FolderGit2,
   GitFork,
-  Headphones,
   Menu,
   Mic,
   MicOff,
@@ -32,7 +31,6 @@ import {
   MoreHorizontal,
   Pencil,
   Plus,
-  Phone,
   PhoneOff,
   RefreshCw,
   Search,
@@ -560,16 +558,24 @@ const Timeline = memo(function Timeline({ detail, loading, error, run, liveEvent
   );
 });
 
-const CallPanel = memo(function CallPanel({ viewedThread, run, onConfirmed }: { viewedThread: ThreadSummary | null; run: RunSummary | null; onConfirmed: (id: string) => void }) {
+const VoiceComposer = memo(function VoiceComposer({ viewedThread, run, onConfirmed, onRun, onStop }: {
+  viewedThread: ThreadSummary | null;
+  run: RunSummary | null;
+  onConfirmed: (id: string) => void;
+  onRun: (run: RunSummary, prompt: string) => void;
+  onStop: () => Promise<void>;
+}) {
   const session = useSession(tokenSource, { agentName: "calldex" });
-  return <SessionProvider session={session}><CallPanelInner session={session} viewedThread={viewedThread} run={run} onConfirmed={onConfirmed} /></SessionProvider>;
+  return <SessionProvider session={session}><VoiceComposerInner session={session} viewedThread={viewedThread} run={run} onConfirmed={onConfirmed} onRun={onRun} onStop={onStop} /></SessionProvider>;
 });
 
-function Composer({ thread, run, onRun, onStop }: {
+function Composer({ thread, run, onRun, onStop, voiceButton, voiceOverlay }: {
   thread: ThreadSummary | null;
   run: RunSummary | null;
   onRun: (run: RunSummary, prompt: string) => void;
   onStop: () => Promise<void>;
+  voiceButton?: React.ReactNode;
+  voiceOverlay?: React.ReactNode;
 }) {
   const [prompt, setPrompt] = useState("");
   const [sending, setSending] = useState(false);
@@ -606,6 +612,7 @@ function Composer({ thread, run, onRun, onStop }: {
 
   return (
     <div className="composer-dock">
+      {voiceOverlay}
       <PromptInput className="composer" onSubmit={({ text }) => void send(text)}>
         <PromptInputTextarea
           value={prompt}
@@ -625,6 +632,7 @@ function Composer({ thread, run, onRun, onStop }: {
             </PromptInputSelectContent>
           </PromptInputSelect>
           <span className="composer-hint">{run?.status === "running" ? "New messages steer this run" : "Enter to send · Shift Enter for newline"}</span>
+          {voiceButton}
           <PromptInputSubmit
             className="send-message"
             status={run?.status === "running" ? "streaming" : sending ? "submitted" : "ready"}
@@ -640,16 +648,23 @@ function Composer({ thread, run, onRun, onStop }: {
   );
 }
 
-function CallPanelInner({ session, viewedThread, run, onConfirmed }: { session: ReturnType<typeof useSession>; viewedThread: ThreadSummary | null; run: RunSummary | null; onConfirmed: (id: string) => void }) {
+function VoiceComposerInner({ session, viewedThread, run, onConfirmed, onRun, onStop }: {
+  session: ReturnType<typeof useSession>;
+  viewedThread: ThreadSummary | null;
+  run: RunSummary | null;
+  onConfirmed: (id: string) => void;
+  onRun: (run: RunSummary, prompt: string) => void;
+  onStop: () => Promise<void>;
+}) {
   const agent = useAgent(session);
   const { messages } = useSessionMessages(session);
   const [micEnabled, setMicEnabled] = useState(true);
   const [callError, setCallError] = useState<string | null>(null);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
-  const [panelTab, setPanelTab] = useState<"voice" | "changes">("voice");
   const activeId = agent.attributes["calldex.activeThreadId"];
   const connected = session.connectionState === ConnectionState.Connected;
+  const connecting = session.connectionState === ConnectionState.Connecting;
   const reconnecting = session.connectionState === ConnectionState.Reconnecting || session.connectionState === ConnectionState.SignalReconnecting;
   const viewedId = viewedThread?.id || null;
   const synchronized = connected && Boolean(viewedId) && activeId === viewedId;
@@ -719,50 +734,56 @@ function CallPanelInner({ session, viewedThread, run, onConfirmed }: { session: 
             ? "Speaking"
             : "Connected";
 
+  const latestMessage = messages.at(-1);
+  const latestTranscript = latestMessage
+    ? "message" in latestMessage
+      ? latestMessage.message
+      : "message" in (latestMessage as unknown as Record<string, unknown>)
+        ? String((latestMessage as unknown as { message: string }).message)
+        : ""
+    : "";
+  const latestSpeaker = latestMessage?.type === "agentTranscript" ? "Calldex" : "You";
+  const voiceVisible = connecting || connected || reconnecting;
+
+  const voiceButton = (
+    <Button
+      type="button"
+      variant="ghost"
+      size="icon-sm"
+      className={`voice-launch${voiceVisible ? " active" : ""}`}
+      onClick={() => { if (!voiceVisible) void connect(); }}
+      disabled={connecting}
+      aria-label={voiceVisible ? "Voice call active" : "Start voice call"}
+      title={callError || (voiceVisible ? "Voice call active" : "Start voice call")}
+    >
+      {connecting ? <RefreshCw className="spin" /> : <Mic />}
+    </Button>
+  );
+
+  const voiceOverlay = voiceVisible ? (
+    <section className="voice-float" aria-label={`Voice call: ${agentLabel.toLowerCase()}`}>
+      <div className="voice-float-topline">
+        <span className={`voice-live-dot${reconnecting ? " reconnecting" : ""}`} />
+        <span>{reconnecting ? "Reconnecting" : connected ? duration : "Connecting"}</span>
+        {viewedThread && <span className="voice-task" title={viewedThread.name}>{synchronized ? <Check size={11} /> : <RefreshCw size={11} className="spin" />}{viewedThread.name}</span>}
+      </div>
+      <Persona state={personaState} variant="obsidian" className="voice-orb" />
+      <strong className="voice-agent-state">{agentLabel}</strong>
+      {latestTranscript && <div className={`voice-latest ${latestSpeaker === "You" ? "user" : "agent"}`}><span>{latestSpeaker}</span><p>{latestTranscript}</p></div>}
+      <div className="voice-float-controls">
+        <Button variant="ghost" size="icon" onClick={toggleMic} aria-label={micEnabled ? "Mute microphone" : "Unmute microphone"}>{micEnabled ? <Mic /> : <MicOff />}</Button>
+        <Button variant="ghost" size="icon" className="voice-end" onClick={() => void end()} aria-label="End call"><PhoneOff /></Button>
+      </div>
+      <StartAudio label="Enable audio" className="voice-enable-audio" />
+      {callError && <div className="voice-float-error"><CircleAlert size={13} />{callError}</div>}
+    </section>
+  ) : null;
+
   return (
-    <aside className="call-panel" aria-label="LiveKit call">
-      <div className="call-shell">
-      <header className="panel-header"><div><span>Calldex</span><h2>Voice</h2></div><Badge variant="outline" className={`connection-badge ${connected ? "online" : ""}`}><span className="connection-dot" />{reconnecting ? "Reconnecting" : connected ? duration : "Offline"}</Badge></header>
-      <div className="panel-tabs"><button className={panelTab === "voice" ? "active" : ""} onClick={() => setPanelTab("voice")}>Voice</button><button className={panelTab === "changes" ? "active" : ""} onClick={() => setPanelTab("changes")}>Changes{run?.diff && <Badge>{run.diff.split("\n").filter((line) => line.startsWith("diff --git")).length || 1}</Badge>}</button></div>
-      {panelTab === "voice" ? <>
-      <section className="persona-stage" aria-label={`Agent is ${agentLabel.toLowerCase()}`}>
-        <Persona state={personaState} variant="obsidian" className="persona-visual" />
-        <div className="persona-copy"><strong>{agentLabel}</strong><span>{connected ? micEnabled ? "Microphone on" : "Microphone muted" : "Start a private voice session"}</span></div>
-      </section>
-      <div className="call-controls">
-        {!connected ? (
-          <Button className="primary-call" onClick={connect} disabled={session.connectionState === ConnectionState.Connecting}><Phone size={16} />{session.connectionState === ConnectionState.Connecting ? "Connecting…" : "Start call"}</Button>
-        ) : (
-          <>
-            <Button variant="outline" size="icon" className="round-control" onClick={toggleMic} aria-label={micEnabled ? "Mute microphone" : "Unmute microphone"}>{micEnabled ? <Mic /> : <MicOff />}</Button>
-            <Button variant="destructive" size="icon" className="end-call" onClick={() => void end()} aria-label="End call"><PhoneOff /></Button>
-          </>
-        )}
-      </div>
-      <StartAudio label="Enable call audio" className="allow-audio" />
+    <>
       <RoomAudioRenderer />
-      {callError && <div className="call-error"><CircleAlert size={14} />{callError}</div>}
-      <div className="voice-context">
-        <div><span>Task</span>{synchronized ? <em><Check size={11} /> Synced</em> : connected && viewedId ? <em><RefreshCw size={11} className="spin" /> Syncing</em> : <em>On connect</em>}</div>
-        {viewedThread ? <><strong title={viewedThread.name}>{viewedThread.name}</strong><small title={viewedThread.repository_path}>{viewedThread.repository_path}</small></> : <p>Select a task to use with voice.</p>}
-      </div>
-      <section className="transcript">
-        <div className="transcript-heading"><Headphones size={14} /><div>Transcript<small>{connected ? "Live" : "Waiting for connection"}</small></div>{messages.length > 0 && <span>{messages.length}</span>}</div>
-        <Conversation className="transcript-scroll">
-          <ConversationContent className="transcript-content">
-          {messages.length === 0 && <ConversationEmptyState className="transcript-empty" icon={<Headphones size={18} />} title="No transcript yet" description="Conversation will appear here when the call begins." />}
-          {messages.map((message) => {
-            const content = "message" in message ? message.message : "message" in (message as unknown as Record<string, unknown>) ? String((message as unknown as { message: string }).message) : "";
-            const from = message.type === "agentTranscript" ? "assistant" : "user";
-            return <Message from={from} className={`transcript-line ${from === "assistant" ? "agent" : "user"}`} key={message.id}><b>{from === "assistant" ? "Calldex" : "You"}</b><MessageContent><p>{content}</p></MessageContent></Message>;
-          })}
-          </ConversationContent>
-          <ConversationScrollButton />
-        </Conversation>
-      </section>
-      </> : <section className="changes-panel">{run?.diff ? <CodeBlock code={run.diff} language="diff" showLineNumbers /> : <ConversationEmptyState title="No live changes" description="File changes from the active run will appear here." />}</section>}
-      </div>
-    </aside>
+      <Composer thread={viewedThread} run={run} onRun={onRun} onStop={onStop} voiceButton={voiceButton} voiceOverlay={voiceOverlay} />
+    </>
   );
 }
 
@@ -1070,9 +1091,10 @@ export default function Dashboard() {
           onFork={() => void forkTask()}
           onArchive={() => { setDialogError(null); setDialog("archive"); }}
         /></div>
-        <Composer
-          thread={selectedThread}
+        <VoiceComposer
+          viewedThread={selectedThread}
           run={run}
+          onConfirmed={confirm}
           onRun={(nextRun, prompt) => {
             setRun(nextRun);
             setLiveEvents((current) => [optimisticUserEvent(nextRun.run_id, nextRun.thread_id, nextRun.turn_id, prompt), ...current.filter((event) => event.run_id === nextRun.run_id)].slice(-500));
@@ -1084,7 +1106,6 @@ export default function Dashboard() {
           }}
         />
       </section>
-      <CallPanel viewedThread={selectedThread} run={run} onConfirmed={confirm} />
       <Dialog open={dialog === "new"} onOpenChange={(open) => { if (!open) setDialog(null); }}>
         <DialogContent className="task-dialog">
           <DialogHeader><DialogTitle>New Codex task</DialogTitle><DialogDescription>Choose a known repository and describe the work.</DialogDescription></DialogHeader>

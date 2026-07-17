@@ -630,3 +630,48 @@ button { color: inherit; font: inherit; }
   .light .call-panel { border-top-color: #d5d5d2; box-shadow: 0 -20px 50px #0002; }
   .light .composer-dock { background: transparent; }
 }
+
+/* Voice is an ephemeral composer surface, not a persistent application rail. */
+.dashboard { grid-template-columns: 292px minmax(0, 1fr); }
+.task-actions { margin-right: 38px; }
+.voice-launch { flex: 0 0 auto; width: 30px; height: 30px; border-radius: 50%; color: #8d8d8d; }
+.voice-launch:hover { background: #383838; color: #eee; }
+.voice-launch.active { background: #313b35; color: #7be6a5; box-shadow: inset 0 0 0 1px #477257; }
+.voice-float { position: absolute; left: 50%; bottom: calc(100% + 4px); z-index: 8; width: min(330px, calc(100vw - 32px)); padding: 13px 16px 14px; transform: translateX(-50%); border: 1px solid #3b3b3b; border-radius: 24px; background: #242424e8; box-shadow: 0 18px 56px #0008; backdrop-filter: blur(20px); animation: voice-float-in .18s ease-out; }
+@keyframes voice-float-in { from { opacity: 0; transform: translate(-50%, 8px) scale(.98); } to { opacity: 1; transform: translate(-50%, 0) scale(1); } }
+.voice-float-topline { min-width: 0; display: flex; align-items: center; gap: 6px; color: #858585; font-size: 9px; }
+.voice-live-dot { width: 6px; height: 6px; border-radius: 50%; background: #49df83; box-shadow: 0 0 9px #49df8399; }
+.voice-live-dot.reconnecting { background: #e5a45f; box-shadow: none; animation: blink 1s infinite; }
+.voice-task { min-width: 0; max-width: 170px; margin-left: auto; display: flex; align-items: center; gap: 4px; overflow: hidden; color: #747474; text-overflow: ellipsis; white-space: nowrap; }
+.voice-task svg { flex: 0 0 auto; }
+.voice-orb { width: 92px; height: 92px; margin: 8px auto 2px; border-radius: 50%; background: #1d1d1d; }
+.voice-agent-state { display: block; color: #dedede; font-size: 12px; font-weight: 540; text-align: center; }
+.voice-latest { max-width: 280px; margin: 10px auto 0; text-align: center; }
+.voice-latest span { color: #737373; font-size: 8px; text-transform: uppercase; letter-spacing: .06em; }
+.voice-latest p { display: -webkit-box; overflow: hidden; margin: 4px 0 0; color: #c9c9c9; font-size: 11px; line-height: 1.45; -webkit-box-orient: vertical; -webkit-line-clamp: 3; }
+.voice-latest.user p { color: #e2e2e2; }
+.voice-float-controls { display: flex; justify-content: center; gap: 8px; margin-top: 11px; }
+.voice-float-controls button { width: 32px; height: 32px; border: 1px solid #3e3e3e; border-radius: 50%; background: #303030; color: #d1d1d1; }
+.voice-float-controls button:hover { background: #3a3a3a; }
+.voice-float-controls .voice-end { border-color: #67383c; background: #543034; color: #ffb0b5; }
+.voice-enable-audio { width: 100%; min-height: 28px; margin-top: 9px; border: 1px solid #5b4932; border-radius: 8px; background: #33291f; color: #d9b27e; font-size: 10px; }
+.voice-float-error { display: flex; align-items: center; justify-content: center; gap: 5px; margin-top: 8px; color: #e98282; font-size: 9px; }
+.light .voice-launch { color: #717171; }
+.light .voice-launch:hover { background: #ececea; color: #222; }
+.light .voice-launch.active { background: #e2f2e8; color: #18733c; box-shadow: inset 0 0 0 1px #9bc7aa; }
+.light .voice-float { border-color: #cececb; background: #fffffff0; box-shadow: 0 18px 50px #00000024; }
+.light .voice-orb { background: #ededeb; }
+.light .voice-agent-state { color: #292929; }
+.light .voice-float-topline, .light .voice-task, .light .voice-latest span { color: #707070; }
+.light .voice-latest p, .light .voice-latest.user p { color: #333; }
+.light .voice-float-controls button { border-color: #d0d0cd; background: #f3f3f1; color: #333; }
+.light .voice-float-controls button:hover { background: #e8e8e5; }
+.light .voice-float-controls .voice-end { border-color: #e7b8bb; background: #fff0f1; color: #a63840; }
+@media (max-width: 820px) {
+  body { overflow: hidden; }
+  .dashboard { min-height: 100vh; height: 100vh; padding-bottom: 0; }
+  .workspace { height: 100vh; min-height: 0; }
+  .composer-dock { bottom: 10px; }
+  .voice-float { bottom: calc(100% + 8px); }
+  .task-actions { margin-right: 32px; }
+}
