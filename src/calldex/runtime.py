@@ -740,9 +740,10 @@ class CodexRuntime:
         active = [run for run in self.runs.values() if run.status == "running"]
         for run in active:
             with contextlib.suppress(Exception):
-                if run.backend == "desktop_ipc" and run.owner_client_id:
-                    await self.desktop_bridge.interrupt_turn(run.thread_id, run.owner_client_id)
-                elif run.handle is not None:
+                # Desktop owns these turns independently. Closing Calldex should
+                # only unfollow them when the bridge closes; interruption remains
+                # an explicit user action through `interrupt()`.
+                if run.backend != "desktop_ipc" and run.handle is not None:
                     await run.handle.interrupt()
         tasks = [run.task for run in active if run.task is not None]
         if tasks:

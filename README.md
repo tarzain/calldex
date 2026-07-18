@@ -1,6 +1,6 @@
 # Calldex
 
-Calldex is a loopback-only React dashboard and LiveKit voice agent for browsing and continuing local Codex threads through Gemini Live.
+Calldex is a local React dashboard and LiveKit voice agent for browsing and continuing local Codex threads through Gemini Live.
 
 ## Setup
 
@@ -19,13 +19,15 @@ Set `LIVEKIT_URL`, `LIVEKIT_API_KEY`, `LIVEKIT_API_SECRET`, and `GEMINI_API_KEY`
 uv run calldex-dashboard
 ```
 
-Open [http://127.0.0.1:3000](http://127.0.0.1:3000). The command starts all three local processes together:
+Open [http://127.0.0.1:3000](http://127.0.0.1:3000) on the host computer, or `http://<host-lan-ip>:3000` from another device on the same network. The command starts all three local processes together:
 
-- the React/TypeScript dashboard on `127.0.0.1:3000`;
+- the React/TypeScript dashboard on `0.0.0.0:3000` so it is reachable over the local network;
 - the FastAPI thread/token API on `127.0.0.1:8765`;
 - the LiveKit `calldex` agent worker.
 
 Stopping the command shuts down the full stack. Override the ports with `CALLDEX_WEB_PORT` and `CALLDEX_API_PORT`.
+
+The LAN dashboard currently has no application authentication. Anyone who can reach port 3000 can use Calldex's Codex controls, so expose it only on a trusted network and do not forward the port to the public internet.
 
 The dashboard lists the 50 most recently updated non-archived Codex tasks from every working directory. Opening a task is read-only. The composer starts a streamed Codex turn with read-only, workspace-write, or explicitly confirmed full access; while a turn is active, new input steers it and the Stop control interrupts it. Plans, reasoning, command/tool output, file changes, diffs, usage, errors, and completion stream into the UI over reconnectable SSE. New task, rename, fork, and confirmed archive actions are available from the workbench.
 

@@ -32,7 +32,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   PanelRightClose,
-  PanelRightOpen,
+  PictureInPicture2,
   Pencil,
   Plus,
   PhoneOff,
@@ -892,7 +892,7 @@ function VoiceComposerInner({ session, viewedThread, run, onConfirmed, onRun, on
         <span className={`voice-live-dot${reconnecting ? " reconnecting" : ""}`} />
         <span>{reconnecting ? "Reconnecting" : connected ? duration : "Connecting"}</span>
         {viewedThread && <span className="voice-task" title={viewedThread.name}>{synchronized ? <Check size={11} /> : <RefreshCw size={11} className="spin" />}{viewedThread.name}</span>}
-        <Button type="button" variant="ghost" size="icon-sm" className="voice-layout-toggle" onClick={() => onLayoutChange(layout === "docked" ? "floating" : "docked")} aria-label={layout === "docked" ? "Detach voice call" : "Attach voice call as pane"} title={layout === "docked" ? "Detach voice call" : "Attach voice call as pane"}>{layout === "docked" ? <PanelRightClose /> : <PanelRightOpen />}</Button>
+        <Button type="button" variant="ghost" size="icon-sm" className="voice-layout-toggle" onClick={() => onLayoutChange(layout === "docked" ? "floating" : "docked")} aria-label={layout === "docked" ? "Detach voice call" : "Attach voice call as pane"} title={layout === "docked" ? "Detach voice call" : "Attach voice call as pane"}>{layout === "docked" ? <PictureInPicture2 /> : <PanelRightClose />}</Button>
       </div>
       <Persona state={personaState} variant="obsidian" className="voice-orb" />
       <strong className="voice-agent-state">{agentLabel}</strong>

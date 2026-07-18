@@ -24,7 +24,8 @@ from .codex_service import CodexService, CodexServiceError, ThreadNotFoundError
 from .desktop_ipc import DesktopIpcBridge
 from .runtime import AccessMode, ActiveRunError, CodexRuntime, RunNotFoundError
 
-HOST = "127.0.0.1"
+WEB_HOST = "0.0.0.0"
+API_HOST = "127.0.0.1"
 API_PORT = 8765
 WEB_PORT = 3000
 
@@ -401,11 +402,11 @@ async def _run_dashboard() -> None:
         raise RuntimeError("Dashboard frontend is not built; run `cd web && npm run build`")
 
     web_process = subprocess.Popen(
-        ["npm", "run", "start", "--", "--hostname", HOST, "--port", str(web_port)],
+        ["npm", "run", "start", "--", "--hostname", WEB_HOST, "--port", str(web_port)],
         cwd=web_dir,
         start_new_session=True,
     )
-    config = uvicorn.Config(app, host=HOST, port=api_port, log_level="info")
+    config = uvicorn.Config(app, host=API_HOST, port=api_port, log_level="info")
     api_server = uvicorn.Server(config)
 
     async def run_worker() -> None:

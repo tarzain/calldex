@@ -84,6 +84,21 @@ class FakeClient:
         self.closed = True
 
 
+class FakeDesktopBridge:
+    def __init__(self) -> None:
+        self.interrupts: list[tuple[str, str]] = []
+        self.closed = False
+
+    def add_broadcast_handler(self, *_: Any) -> Any:
+        return lambda: None
+
+    async def interrupt_turn(self, thread_id: str, owner_client_id: str) -> None:
+        self.interrupts.append((thread_id, owner_client_id))
+
+    async def close(self) -> None:
+        self.closed = True
+
+
 @pytest.mark.asyncio
 async def test_runtime_streams_steers_and_finishes_one_run_per_thread() -> None:
     client = FakeClient()
@@ -124,6 +139,30 @@ async def test_runtime_replays_events_and_interrupts() -> None:
     await runtime.wait(run.id)
     assert client.thread.handle.interrupted is True
     await runtime.close()
+
+
+@pytest.mark.asyncio
+async def test_runtime_close_detaches_without_interrupting_desktop_turn() -> None:
+    client = FakeClient()
+    bridge = FakeDesktopBridge()
+    runtime = CodexRuntime(client, default_cwd="/tmp/project", desktop_bridge=bridge)  # type: ignore[arg-type]
+    run = RunState(
+        id="desktop-run",
+        thread_id="thread-1",
+        turn_id="turn-1",
+        access_mode=AccessMode.workspace_write,
+        handle=None,
+        backend="desktop_ipc",
+        owner_client_id="desktop-owner",
+    )
+    runtime.runs[run.id] = run
+    runtime.active_by_thread[run.thread_id] = run.id
+
+    await runtime.close()
+
+    assert bridge.interrupts == []
+    assert bridge.closed is True
+    assert client.closed is True
 
 
 def test_run_event_buffer_is_bounded() -> None:
