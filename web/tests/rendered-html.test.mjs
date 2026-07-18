@@ -84,6 +84,7 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /event\.phase === "commentary"/);
   assert.match(page, /isToolEventType\(event\.type\)/);
   assert.match(page, /normalizeLiveTools\(events\)/);
+  assert.match(page, /normalizeLiveProgressText\(events\)/);
   assert.match(page, /<ToolActivityGroup/);
   assert.match(page, /Search activity/);
   assert.match(page, /voice-float.*voice-docked/);

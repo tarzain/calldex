@@ -101,7 +101,7 @@ import {
   ConfirmationRequest,
   ConfirmationTitle,
 } from "@/components/ai-elements/confirmation";
-import { mergeRunEvent, optimisticUserEvent, type RunEvent } from "@/lib/run-events";
+import { mergeRunEvent, normalizeLiveProgressText, optimisticUserEvent, type RunEvent } from "@/lib/run-events";
 import {
   groupConsecutiveTools,
   isToolEventType,
@@ -349,10 +349,7 @@ function LiveActivity({ run, events }: { run: RunSummary | null; events: RunEven
   const currentPlan = [...events].reverse().find((event) => event.type === "turn.plan.updated");
   const planPayload = currentPlan?.payload.plan;
   const plan = Array.isArray(planPayload) ? planPayload as Array<{ step?: string; status?: string }> : run?.plan || [];
-  const reasoning = events
-    .filter((event) => event.type.includes("reasoning") || event.type.includes("agentMessage.delta"))
-    .map((event) => String(event.payload.delta || event.payload.text || ""))
-    .join("");
+  const reasoning = normalizeLiveProgressText(events);
   const tools = normalizeLiveTools(events);
   const userPrompts = events.filter((event) => event.type === "ui.user_message" || event.type === "run.started" || event.type === "run.steered");
 
