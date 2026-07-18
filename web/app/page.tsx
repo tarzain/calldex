@@ -29,6 +29,10 @@ import {
   Monitor,
   Moon,
   MoreHorizontal,
+  PanelLeftClose,
+  PanelLeftOpen,
+  PanelRightClose,
+  PanelRightOpen,
   Pencil,
   Plus,
   PhoneOff,
@@ -104,6 +108,20 @@ import {
   normalizeLiveTools,
   normalizePersistedTool,
 } from "@/lib/tool-activity";
+import {
+  clampVoicePaneWidth,
+  clampVoiceSheetHeight,
+  DEFAULT_VOICE_PANE_WIDTH,
+  DEFAULT_VOICE_SHEET_HEIGHT,
+  DESKTOP_BREAKPOINT,
+  MIN_VOICE_PANE_WIDTH,
+  MIN_VOICE_SHEET_HEIGHT,
+  keyboardResizeValue,
+  readStoredNumber,
+  readVoiceLayout,
+  resizeVoiceDimension,
+  type VoiceLayoutMode,
+} from "@/lib/layout-preferences";
 
 type ThreadSummary = {
   id: string;
@@ -575,15 +593,22 @@ const Timeline = memo(function Timeline({ detail, loading, error, run, liveEvent
   );
 });
 
-const VoiceComposer = memo(function VoiceComposer({ viewedThread, run, onConfirmed, onRun, onStop }: {
+const VoiceComposer = memo(function VoiceComposer({ viewedThread, run, onConfirmed, onRun, onStop, layout, paneWidth, sheetHeight, onLayoutChange, onPaneWidthChange, onSheetHeightChange, onDockVisibilityChange }: {
   viewedThread: ThreadSummary | null;
   run: RunSummary | null;
   onConfirmed: (id: string) => void;
   onRun: (run: RunSummary, prompt: string) => void;
   onStop: () => Promise<void>;
+  layout: VoiceLayoutMode;
+  paneWidth: number;
+  sheetHeight: number;
+  onLayoutChange: (layout: VoiceLayoutMode) => void;
+  onPaneWidthChange: (width: number) => void;
+  onSheetHeightChange: (height: number) => void;
+  onDockVisibilityChange: (visible: boolean) => void;
 }) {
   const session = useSession(tokenSource, { agentName: "calldex" });
-  return <SessionProvider session={session}><VoiceComposerInner session={session} viewedThread={viewedThread} run={run} onConfirmed={onConfirmed} onRun={onRun} onStop={onStop} /></SessionProvider>;
+  return <SessionProvider session={session}><VoiceComposerInner session={session} viewedThread={viewedThread} run={run} onConfirmed={onConfirmed} onRun={onRun} onStop={onStop} layout={layout} paneWidth={paneWidth} sheetHeight={sheetHeight} onLayoutChange={onLayoutChange} onPaneWidthChange={onPaneWidthChange} onSheetHeightChange={onSheetHeightChange} onDockVisibilityChange={onDockVisibilityChange} /></SessionProvider>;
 });
 
 function Composer({ thread, run, onRun, onStop, voiceButton, voiceOverlay }: {
@@ -599,6 +624,17 @@ function Composer({ thread, run, onRun, onStop, voiceButton, voiceOverlay }: {
   const [error, setError] = useState<string | null>(null);
   const [accessMode, setAccessMode] = useState<AccessMode>("workspace_write");
   const [confirmFullAccess, setConfirmFullAccess] = useState(false);
+  const dockRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const dock = dockRef.current;
+    if (!dock || typeof ResizeObserver === "undefined") return;
+    const update = () => document.querySelector<HTMLElement>(".dashboard")?.style.setProperty("--composer-dock-height", `${dock.getBoundingClientRect().height}px`);
+    update();
+    const observer = new ResizeObserver(update);
+    observer.observe(dock);
+    return () => observer.disconnect();
+  }, []);
 
   const send = async (text = prompt) => {
     const value = text.trim();
@@ -628,7 +664,7 @@ function Composer({ thread, run, onRun, onStop, voiceButton, voiceOverlay }: {
   };
 
   return (
-    <div className="composer-dock">
+    <div className="composer-dock" ref={dockRef}>
       {voiceOverlay}
       <PromptInput className="composer" onSubmit={({ text }) => void send(text)}>
         <PromptInputTextarea
@@ -665,13 +701,20 @@ function Composer({ thread, run, onRun, onStop, voiceButton, voiceOverlay }: {
   );
 }
 
-function VoiceComposerInner({ session, viewedThread, run, onConfirmed, onRun, onStop }: {
+function VoiceComposerInner({ session, viewedThread, run, onConfirmed, onRun, onStop, layout, paneWidth, sheetHeight, onLayoutChange, onPaneWidthChange, onSheetHeightChange, onDockVisibilityChange }: {
   session: ReturnType<typeof useSession>;
   viewedThread: ThreadSummary | null;
   run: RunSummary | null;
   onConfirmed: (id: string) => void;
   onRun: (run: RunSummary, prompt: string) => void;
   onStop: () => Promise<void>;
+  layout: VoiceLayoutMode;
+  paneWidth: number;
+  sheetHeight: number;
+  onLayoutChange: (layout: VoiceLayoutMode) => void;
+  onPaneWidthChange: (width: number) => void;
+  onSheetHeightChange: (height: number) => void;
+  onDockVisibilityChange: (visible: boolean) => void;
 }) {
   const agent = useAgent(session);
   const { messages } = useSessionMessages(session);
@@ -679,6 +722,7 @@ function VoiceComposerInner({ session, viewedThread, run, onConfirmed, onRun, on
   const [callError, setCallError] = useState<string | null>(null);
   const [connectedAt, setConnectedAt] = useState<number | null>(null);
   const [elapsed, setElapsed] = useState(0);
+  const [compactViewport, setCompactViewport] = useState(false);
   const activeId = agent.attributes["calldex.activeThreadId"];
   const connected = session.connectionState === ConnectionState.Connected;
   const connecting = session.connectionState === ConnectionState.Connecting;
@@ -761,6 +805,73 @@ function VoiceComposerInner({ session, viewedThread, run, onConfirmed, onRun, on
     : "";
   const latestSpeaker = latestMessage?.type === "agentTranscript" ? "Calldex" : "You";
   const voiceVisible = connecting || connected || reconnecting;
+  const resizeCleanupRef = useRef<(() => void) | null>(null);
+
+  useEffect(() => {
+    const media = window.matchMedia(`(max-width: ${DESKTOP_BREAKPOINT}px)`);
+    const update = () => setCompactViewport(media.matches);
+    update();
+    media.addEventListener("change", update);
+    return () => media.removeEventListener("change", update);
+  }, []);
+
+  useEffect(() => {
+    onDockVisibilityChange(layout === "docked" && voiceVisible);
+    return () => onDockVisibilityChange(false);
+  }, [layout, onDockVisibilityChange, voiceVisible]);
+
+  useEffect(() => () => resizeCleanupRef.current?.(), []);
+
+  const resizeMaximum = compactViewport
+    ? clampVoiceSheetHeight(Number.POSITIVE_INFINITY, typeof window === "undefined" ? 800 : window.innerHeight)
+    : clampVoicePaneWidth(Number.POSITIVE_INFINITY, typeof window === "undefined" ? 1440 : window.innerWidth);
+  const resizeMinimum = compactViewport ? MIN_VOICE_SHEET_HEIGHT : MIN_VOICE_PANE_WIDTH;
+  const resizeValue = compactViewport ? sheetHeight : paneWidth;
+
+  const commitResize = useCallback((value: number) => {
+    if (compactViewport) onSheetHeightChange(clampVoiceSheetHeight(value, window.innerHeight));
+    else onPaneWidthChange(clampVoicePaneWidth(value, window.innerWidth));
+  }, [compactViewport, onPaneWidthChange, onSheetHeightChange]);
+
+  const resizeWithKeyboard = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    const next = keyboardResizeValue({ key: event.key, current: resizeValue, minimum: resizeMinimum, maximum: resizeMaximum, compact: compactViewport, shiftKey: event.shiftKey });
+    if (next === null) return;
+    event.preventDefault();
+    commitResize(next);
+  };
+
+  const beginResize = (event: React.PointerEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    const compact = compactViewport;
+    const startPosition = compact ? event.clientY : event.clientX;
+    const startSize = compact ? sheetHeight : paneWidth;
+    let finalSize = startSize;
+    const dashboard = document.querySelector<HTMLElement>(".dashboard");
+    document.body.classList.add("voice-resizing");
+    const move = (pointerEvent: PointerEvent) => {
+      const delta = startPosition - (compact ? pointerEvent.clientY : pointerEvent.clientX);
+      finalSize = resizeVoiceDimension(startSize, delta, compact, compact ? window.innerHeight : window.innerWidth);
+      dashboard?.style.setProperty(compact ? "--voice-sheet-height" : "--voice-pane-width", `${finalSize}px`);
+    };
+    const cleanup = () => {
+      document.removeEventListener("pointermove", move);
+      document.removeEventListener("pointerup", finish);
+      document.removeEventListener("pointercancel", finish);
+      document.body.classList.remove("voice-resizing");
+      resizeCleanupRef.current = null;
+    };
+    const finish = () => {
+      cleanup();
+      if (compact) onSheetHeightChange(finalSize);
+      else onPaneWidthChange(finalSize);
+    };
+    resizeCleanupRef.current?.();
+    resizeCleanupRef.current = cleanup;
+    document.addEventListener("pointermove", move);
+    document.addEventListener("pointerup", finish);
+    document.addEventListener("pointercancel", finish);
+  };
 
   const voiceButton = (
     <Button
@@ -778,11 +889,13 @@ function VoiceComposerInner({ session, viewedThread, run, onConfirmed, onRun, on
   );
 
   const voiceOverlay = voiceVisible ? (
-    <section className="voice-float" aria-label={`Voice call: ${agentLabel.toLowerCase()}`}>
+    <section className={`voice-float${layout === "docked" ? " voice-docked" : ""}`} aria-label={`Voice call: ${agentLabel.toLowerCase()}`}>
+      {layout === "docked" && <div className="voice-resize-handle" role="separator" tabIndex={0} aria-label={compactViewport ? "Resize voice sheet" : "Resize voice pane"} aria-orientation={compactViewport ? "horizontal" : "vertical"} aria-valuemin={resizeMinimum} aria-valuemax={resizeMaximum} aria-valuenow={resizeValue} onPointerDown={beginResize} onKeyDown={resizeWithKeyboard}><span /></div>}
       <div className="voice-float-topline">
         <span className={`voice-live-dot${reconnecting ? " reconnecting" : ""}`} />
         <span>{reconnecting ? "Reconnecting" : connected ? duration : "Connecting"}</span>
         {viewedThread && <span className="voice-task" title={viewedThread.name}>{synchronized ? <Check size={11} /> : <RefreshCw size={11} className="spin" />}{viewedThread.name}</span>}
+        <Button type="button" variant="ghost" size="icon-sm" className="voice-layout-toggle" onClick={() => onLayoutChange(layout === "docked" ? "floating" : "docked")} aria-label={layout === "docked" ? "Detach voice call" : "Attach voice call as pane"} title={layout === "docked" ? "Detach voice call" : "Attach voice call as pane"}>{layout === "docked" ? <PanelRightClose /> : <PanelRightOpen />}</Button>
       </div>
       <Persona state={personaState} variant="obsidian" className="voice-orb" />
       <strong className="voice-agent-state">{agentLabel}</strong>
@@ -815,6 +928,11 @@ export default function Dashboard() {
   const [loading, setLoading] = useState(true);
   const [detailLoading, setDetailLoading] = useState(false);
   const [drawerOpen, setDrawerOpen] = useState(false);
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const [voiceLayout, setVoiceLayout] = useState<VoiceLayoutMode>("floating");
+  const [voicePaneWidth, setVoicePaneWidth] = useState(DEFAULT_VOICE_PANE_WIDTH);
+  const [voiceSheetHeight, setVoiceSheetHeight] = useState(DEFAULT_VOICE_SHEET_HEIGHT);
+  const [voiceDockVisible, setVoiceDockVisible] = useState(false);
   const [threadQuery, setThreadQuery] = useState("");
   const [lastUpdated, setLastUpdated] = useState<Date | null>(null);
   const [run, setRun] = useState<RunSummary | null>(null);
@@ -835,6 +953,7 @@ export default function Dashboard() {
   const threadsRequestRef = useRef<Promise<ThreadSummary[] | null> | null>(null);
   const detailRequestRef = useRef<Map<string, Promise<void>>>(new Map());
   const searchRef = useRef<HTMLInputElement>(null);
+  const preferencesReadyRef = useRef(false);
   const activeRunId = run?.run_id;
   const activeRunStatus = run?.status;
   const activeRunThreadId = run?.thread_id;
@@ -956,9 +1075,35 @@ export default function Dashboard() {
         event.preventDefault();
         searchRef.current?.focus();
       }
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "b") {
+        event.preventDefault();
+        setSidebarCollapsed((value) => !value);
+      }
     };
     document.addEventListener("keydown", focusSearch);
     return () => document.removeEventListener("keydown", focusSearch);
+  }, []);
+  useEffect(() => {
+    const hydrate = window.setTimeout(() => {
+      setSidebarCollapsed(window.localStorage.getItem("calldex.sidebarCollapsed") === "true");
+      setVoiceLayout(readVoiceLayout(window.localStorage.getItem("calldex.voiceLayout")));
+      setVoicePaneWidth(clampVoicePaneWidth(readStoredNumber(window.localStorage.getItem("calldex.voicePaneWidth"), DEFAULT_VOICE_PANE_WIDTH), window.innerWidth));
+      setVoiceSheetHeight(clampVoiceSheetHeight(readStoredNumber(window.localStorage.getItem("calldex.voiceSheetHeight"), DEFAULT_VOICE_SHEET_HEIGHT), window.innerHeight));
+      preferencesReadyRef.current = true;
+    }, 0);
+    return () => window.clearTimeout(hydrate);
+  }, []);
+  useEffect(() => { if (preferencesReadyRef.current) window.localStorage.setItem("calldex.sidebarCollapsed", String(sidebarCollapsed)); }, [sidebarCollapsed]);
+  useEffect(() => { if (preferencesReadyRef.current) window.localStorage.setItem("calldex.voiceLayout", voiceLayout); }, [voiceLayout]);
+  useEffect(() => { if (preferencesReadyRef.current) window.localStorage.setItem("calldex.voicePaneWidth", String(voicePaneWidth)); }, [voicePaneWidth]);
+  useEffect(() => { if (preferencesReadyRef.current) window.localStorage.setItem("calldex.voiceSheetHeight", String(voiceSheetHeight)); }, [voiceSheetHeight]);
+  useEffect(() => {
+    const clampLayout = () => {
+      setVoicePaneWidth((value) => clampVoicePaneWidth(value, window.innerWidth));
+      setVoiceSheetHeight((value) => clampVoiceSheetHeight(value, window.innerHeight));
+    };
+    window.addEventListener("resize", clampLayout);
+    return () => window.removeEventListener("resize", clampLayout);
   }, []);
 
   const choose = useCallback((thread: ThreadSummary) => {
@@ -1081,10 +1226,11 @@ export default function Dashboard() {
   };
 
   return (
-    <main className="dashboard" onKeyDown={navigate}>
+    <main className={`dashboard${sidebarCollapsed ? " sidebar-collapsed" : ""}${voiceDockVisible ? " voice-pane-visible" : ""}`} style={{ "--voice-pane-width": `${voicePaneWidth}px`, "--voice-sheet-height": `${voiceSheetHeight}px` } as React.CSSProperties} onKeyDown={navigate}>
       <ThemeMenu />
+      {sidebarCollapsed && <Button type="button" variant="ghost" size="icon-sm" className="sidebar-restore" onClick={() => setSidebarCollapsed(false)} aria-label="Show thread list" title="Show thread list (⌘B)"><PanelLeftOpen /></Button>}
       <aside className={`sidebar ${drawerOpen ? "drawer-open" : ""}`}>
-        <header className="brand"><div><strong>Codex</strong><span><i /> Calldex voice</span></div><Button variant="ghost" size="icon-sm" onClick={() => searchRef.current?.focus()} aria-label="Search tasks"><Search /></Button><button className="close-drawer" onClick={() => setDrawerOpen(false)} aria-label="Close threads"><X /></button></header>
+        <header className="brand"><div><strong>Codex</strong><span><i /> Calldex voice</span></div><div className="brand-actions"><Button variant="ghost" size="icon-sm" onClick={() => searchRef.current?.focus()} aria-label="Search tasks"><Search /></Button><Button variant="ghost" size="icon-sm" className="collapse-sidebar" onClick={() => setSidebarCollapsed(true)} aria-label="Hide thread list" title="Hide thread list (⌘B)"><PanelLeftClose /></Button></div><button className="close-drawer" onClick={() => setDrawerOpen(false)} aria-label="Close threads"><X /></button></header>
         <div className="sidebar-primary"><Button onClick={() => void openNewTask()}><Plus size={15} />New task</Button><Button variant="ghost" size="icon-sm" onClick={refresh} aria-label="Refresh tasks"><RefreshCw size={14} /></Button></div>
         <label className="thread-search"><Search size={14} /><Input ref={searchRef} value={threadQuery} onChange={(event) => setThreadQuery(event.target.value)} placeholder="Search tasks and repositories" aria-label="Search tasks" />{threadQuery ? <Button variant="ghost" size="icon-sm" onClick={() => setThreadQuery("")} aria-label="Clear search"><X /></Button> : <kbd>⌘K</kbd>}</label>
         <div className="sidebar-heading"><span>Recent tasks</span><small>{filteredThreads.length}/{threads.length}</small></div>
@@ -1111,6 +1257,13 @@ export default function Dashboard() {
         <VoiceComposer
           viewedThread={selectedThread}
           run={run}
+          layout={voiceLayout}
+          paneWidth={voicePaneWidth}
+          sheetHeight={voiceSheetHeight}
+          onLayoutChange={setVoiceLayout}
+          onPaneWidthChange={setVoicePaneWidth}
+          onSheetHeightChange={setVoiceSheetHeight}
+          onDockVisibilityChange={setVoiceDockVisible}
           onConfirmed={confirm}
           onRun={(nextRun, prompt) => {
             setRun(nextRun);

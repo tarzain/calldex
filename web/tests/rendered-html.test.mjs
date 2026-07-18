@@ -30,13 +30,14 @@ test("server-renders the local dashboard shell", async () => {
 
 test("implements streaming, safe rendering, lifecycle controls, and two-way voice selection", async () => {
   const page = await readFile(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const styles = await readFile(new URL("../app/globals.css", import.meta.url), "utf8");
   const layout = await readFile(new URL("../app/layout.tsx", import.meta.url), "utf8");
   const message = await readFile(new URL("../components/ai-elements/message.tsx", import.meta.url), "utf8");
   const persona = await readFile(new URL("../components/ai-elements/persona.tsx", import.meta.url), "utf8");
   const messageRoute = await readFile(new URL("../app/api/threads/[threadId]/messages/route.ts", import.meta.url), "utf8");
   assert.match(page, /const POLL_MS = 3000/);
   assert.match(page, /function ThemeMenu/);
-  assert.match(page, /<main className="dashboard"[^>]*>\s*<ThemeMenu \/>/);
+  assert.match(page, /<main className=\{`dashboard[^>]*>\s*<ThemeMenu \/>/);
   assert.match(page, /calldex\.theme/);
   assert.match(page, /prefers-color-scheme: dark/);
   assert.match(layout, /themeScript/);
@@ -56,6 +57,7 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /ArrowDown/);
   assert.match(page, /setMicrophoneEnabled/);
   assert.match(page, /RoomAudioRenderer/);
+  assert.equal(page.match(/<RoomAudioRenderer/g)?.length, 1);
   assert.match(page, /@\/components\/ui\/button/);
   assert.match(page, /@\/components\/ui\/collapsible/);
   assert.match(page, /@\/components\/ui\/input/);
@@ -84,7 +86,24 @@ test("implements streaming, safe rendering, lifecycle controls, and two-way voic
   assert.match(page, /normalizeLiveTools\(events\)/);
   assert.match(page, /<ToolActivityGroup/);
   assert.match(page, /Search activity/);
-  assert.match(page, /className="voice-float"/);
+  assert.match(page, /voice-float.*voice-docked/);
+  assert.match(page, /calldex\.voiceLayout/);
+  assert.match(page, /calldex\.voicePaneWidth/);
+  assert.match(page, /calldex\.voiceSheetHeight/);
+  assert.match(page, /calldex\.sidebarCollapsed/);
+  assert.match(page, /Attach voice call as pane/);
+  assert.match(page, /Detach voice call/);
+  assert.match(page, /role="separator"/);
+  assert.match(page, /aria-orientation/);
+  assert.match(page, /ResizeObserver/);
+  assert.match(page, /event\.key\.toLowerCase\(\) === "b"/);
+  assert.match(page, /Show thread list/);
+  assert.match(page, /Hide thread list/);
+  assert.match(styles, /\.voice-float\.voice-docked/);
+  assert.match(styles, /--voice-pane-width/);
+  assert.match(styles, /--voice-sheet-height/);
+  assert.match(styles, /\.dashboard\.sidebar-collapsed/);
+  assert.match(styles, /@media \(max-width: 820px\)[\s\S]*\.voice-float\.voice-docked/);
   assert.match(page, /messages\.at\(-1\)/);
   assert.match(page, /voiceVisible \? \(/);
   assert.match(page, /voiceButton=\{voiceButton\}/);
